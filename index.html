@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram 2FA demo</title>
+<style>
+:root{color-scheme:light dark;--line:#8883;--accent:#2f6fed}
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;margin:0;line-height:1.5}
+main{max-width:460px;margin:0 auto;padding:20px 16px 40px}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+h1{font-size:1.35rem}h2{font-size:1.05rem;margin:0 0 10px}
+input,button,a.btn{font:inherit;width:100%;padding:12px;border-radius:10px;margin-top:8px;display:block;text-align:center;text-decoration:none}
+input{border:1px solid var(--line);background:transparent;color:inherit}
+button,a.btn{border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:inherit;border:1px solid var(--line)}
+.msg{margin-top:10px;padding:10px;border-radius:8px;font-size:.95rem;display:none}
+.ok{background:#1a8f4a33;display:block}.err{background:#d9302033;display:block}.info{background:#2f6fed22;display:block}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main>
+<h1>🔐 Telegram 2FA demo</h1>
+
+<div class="card" id="s1">
+  <h2>1. Telegramni ulash</h2>
+  <input id="uid" placeholder="Foydalanuvchi nomi (masalan: ali)" autocapitalize="off">
+  <button id="linkBtn">Ulash havolasini olish</button>
+  <a id="deep" class="btn hide" target="_blank" rel="noopener">Telegramda ochish</a>
+  <div id="m1" class="msg"></div>
+</div>
+
+<div class="card hide" id="s2">
+  <h2>2. Kirish</h2>
+  <button id="codeBtn">Kod yuborish</button>
+  <button id="appBtn" class="sec">Tugma bilan tasdiqlash</button>
+  <div id="codeBox" class="hide">
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="6 xonali kod">
+    <button id="verBtn">Tekshirish</button>
+  </div>
+  <div id="m2" class="msg"></div>
+</div>
+</main>
+
+<script>
+var $ = function (id) { return document.getElementById(id); };
+var uid = "", timer = null;
+
+function say(id, text, cls) { var m = $(id); m.textContent = text; m.className = "msg " + cls; }
+
+function api(path, body) {
+  var opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+  return fetch("/demo" + path, opt).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Xatolik (" + r.status + ")");
+      return j;
+    });
+  });
+}
+
+function poll(fn, ms) {
+  clearInterval(timer);
+  var tries = 0;
+  timer = setInterval(function () {
+    if (++tries > 150) { clearInterval(timer); return; }
+    fn();
+  }, ms);
+}
+
+$("linkBtn").onclick = function () {
+  uid = $("uid").value.trim();
+  if (!uid) return say("m1", "Foydalanuvchi nomini kiriting", "err");
+  api("/link", { user_id: uid }).then(function (d) {
+    $("deep").href = d.deep_link;
+    $("deep").classList.remove("hide");
+    say("m1", "Telegramda botni oching va START tugmasini bosing. Kutilmoqda...", "info");
+    poll(function () {
+      api("/link/" + encodeURIComponent(uid)).then(function (s) {
+        if (s.linked) {
+          clearInterval(timer);
+          say("m1", "✅ Telegram ulandi", "ok");
+          $("s2").classList.remove("hide");
+        }
+      }).catch(function () {});
+    }, 2000);
+  }).catch(function (e) { say("m1", e.message, "err"); });
+};
+
+$("codeBtn").onclick = function () {
+  clearInterval(timer);
+  api("/send", { user_id: uid }).then(function () {
+    $("codeBox").classList.remove("hide");
+    say("m2", "Kod Telegramga yuborildi", "info");
+  }).catch(function (e) { say("m2", e.message, "err"); });
+};
+
+$("verBtn").onclick = function () {
+  api("/verify", { user_id: uid, code: $("code").value.trim() }).then(function (d) {
+    if (d.valid) return say("m2", "✅ Muvaffaqiyatli! Tizimga kirdingiz.", "ok");
+    var why = { wrong_code: "Kod noto‘g‘ri", expired: "Kod muddati tugagan, qayta yuboring", too_many_attempts: "Juda ko‘p urinish. Yangi kod oling" };
+    say("m2", why[d.reason] || "Xatolik", "err");
+  }).catch(function (e) { say("m2", e.message, "err"); });
+};
+
+$("appBtn").onclick = function () {
+  $("codeBox").classList.add("hide");
+  api("/approve", { user_id: uid }).then(function (d) {
+    say("m2", "Telegramdagi xabarda ✅ tugmasini bosing...", "info");
+    poll(function () {
+      api("/approve/" + encodeURIComponent(d.request_id)).then(function (s) {
+        if (s.status === "approved") { clearInterval(timer); say("m2", "✅ Tasdiqlandi! Tizimga kirdingiz.", "ok"); }
+        else if (s.status === "denied") { clearInterval(timer); say("m2", "❌ Rad etildi", "err"); }
+        else if (s.status === "expired") { clearInterval(timer); say("m2", "Muddati tugadi, qayta urinib ko‘ring", "err"); }
+      }).catch(function () {});
+    }, 2000);
+  }).catch(function (e) { say("m2", e.message, "err"); });
+};
+</script>
+</body>
+</html>
